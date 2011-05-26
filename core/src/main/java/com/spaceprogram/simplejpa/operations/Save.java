@@ -1,19 +1,21 @@
 package com.spaceprogram.simplejpa.operations;
 
-import com.amazonaws.AmazonClientException;
-import com.amazonaws.services.s3.AmazonS3;
-import com.amazonaws.services.simpledb.model.Attribute;
-import com.amazonaws.services.simpledb.model.DeleteAttributesRequest;
-import com.amazonaws.services.simpledb.model.Item;
-import com.amazonaws.services.simpledb.model.PutAttributesRequest;
-import com.amazonaws.services.simpledb.model.ReplaceableAttribute;
-import com.spaceprogram.simplejpa.AnnotationInfo;
-import com.spaceprogram.simplejpa.DomainHelper;
-import com.spaceprogram.simplejpa.EntityManagerFactoryImpl;
-import com.spaceprogram.simplejpa.EntityManagerSimpleJPA;
-import com.spaceprogram.simplejpa.LazyInterceptor;
-import com.spaceprogram.simplejpa.NamingHelper;
-import net.sf.cglib.proxy.Factory;
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.ObjectOutputStream;
+import java.io.UnsupportedEncodingException;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.List;
+import java.util.UUID;
+import java.util.concurrent.Callable;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 
 import javax.persistence.EnumType;
 import javax.persistence.Enumerated;
@@ -26,25 +28,28 @@ import javax.persistence.PostPersist;
 import javax.persistence.PostUpdate;
 import javax.persistence.PrePersist;
 import javax.persistence.PreUpdate;
-import java.io.ByteArrayInputStream;
-import java.io.ByteArrayOutputStream;
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.ObjectOutputStream;
-import java.lang.reflect.InvocationTargetException;
-import java.lang.reflect.Method;
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.List;
-import java.util.UUID;
-import java.util.concurrent.Callable;
-import java.util.logging.Level;
-import java.util.logging.Logger;
+
+import net.sf.cglib.proxy.Factory;
+
+import com.amazonaws.AmazonClientException;
+import com.amazonaws.services.s3.AmazonS3;
+import com.amazonaws.services.simpledb.model.Attribute;
+import com.amazonaws.services.simpledb.model.DeleteAttributesRequest;
+import com.amazonaws.services.simpledb.model.PutAttributesRequest;
+import com.amazonaws.services.simpledb.model.ReplaceableAttribute;
+import com.spaceprogram.simplejpa.AnnotationInfo;
+import com.spaceprogram.simplejpa.EntityManagerFactoryImpl;
+import com.spaceprogram.simplejpa.EntityManagerSimpleJPA;
+import com.spaceprogram.simplejpa.LazyInterceptor;
+import com.spaceprogram.simplejpa.NamingHelper;
 
 /**
  * User: treeder
  * Date: Apr 1, 2008
  * Time: 11:51:16 AM
+ * 
+ * Additional Contributions
+ *  - Michael Balser michael@die-balsers.de
  */
 public class Save implements Callable {
     private static Logger logger = Logger.getLogger(Save.class.getName());
@@ -200,8 +205,35 @@ public class Save implements Callable {
             }
             else {
                 String toSet = ob != null ? em.padOrConvertIfRequired(ob) : "";
-                // todo: throw an exception if this is going to exceed maximum size, suggest using @Lob
-                attsToPut.add(new ReplaceableAttribute(columnName, toSet, true));
+
+                try {
+                	// Check size of encoded value.
+                	byte[] bytes = toSet.getBytes("UTF-8");
+                	if (bytes.length > 1024) {
+                        // Maximum size is exceeded; split value into multiple chunks.
+                		int i = 0, pos = 0;
+                		while (pos < bytes.length) {
+                			int size = 1020;
+                			// Beware: do not split encoded characters.
+                			// (Additional bytes of an encoded character follow the pattern 10xxxxxx.)
+                			while (pos + size < bytes.length && (bytes[pos + size] & 0xc0) == 0x80) {
+                				size --;
+                			}
+                			String chunk = new String(Arrays.copyOfRange(bytes, pos, Math.min(pos + size, bytes.length)), "UTF-8");
+                			// Add four digit counter.
+                			String counter = Integer.toString(i / 1000 % 10) + Integer.toString(i / 100 % 10) + Integer.toString(i / 10 % 10) + Integer.toString(i % 10);
+                            attsToPut.add(new ReplaceableAttribute(columnName, chunk + counter, i == 0));
+                            i ++;
+                            pos += size;
+                		}
+                	} else {
+                		// Simply store string as single value.
+                        attsToPut.add(new ReplaceableAttribute(columnName, toSet, true));
+                	}
+                } catch (UnsupportedEncodingException x) {
+                    // should never happen
+                    throw new PersistenceException("Encoding 'UTF-8' is not supported!", x);
+                }
             }
         }
 

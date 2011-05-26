@@ -15,6 +15,7 @@ import javax.persistence.PersistenceException;
 import java.lang.reflect.Method;
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 import java.util.logging.Logger;
@@ -26,6 +27,7 @@ import java.util.logging.Logger;
  * 
  * Additional Contributions
  *  - Yair Ben-Meir reformy@gmail.com
+ *  - Michael Balser michael@die-balsers.de
  */
 public class ObjectBuilder {
 
@@ -165,14 +167,37 @@ public class ObjectBuilder {
 
     private static String getValueToSet(List<Attribute> atts, String propertyName, String columnName) {
         if(columnName != null) propertyName = columnName;
+        // Retrieve all matching attributes.
+        List<Attribute> matchingAtts = new ArrayList<Attribute>();
         for (Attribute att : atts) {
             String attName = att.getName();
             if (attName.equals(propertyName)) {
-                String val = att.getValue();
-                return val;
+            	matchingAtts.add(att);
             }
         }
-        return null;
+        if (matchingAtts.size() == 0) {
+        	return null;
+        } else if (matchingAtts.size() == 1) {
+        	// Value has not been split into multiple chunks.
+        	// Simply return value.
+            String val = matchingAtts.get(0).getValue();
+            return val;
+        } else {
+        	// Value has been split into multiple chunks.
+        	// 1. Order chunks according to attached counter.
+    		String[] chunks = new String[matchingAtts.size()];
+        	for (int i = 0; i < matchingAtts.size(); i ++) {
+        		String chunk = matchingAtts.get(i).getValue();
+        		int counter = Integer.parseInt("" + chunk.charAt(chunk.length() - 4)) * 1000 + Integer.parseInt("" + chunk.charAt(chunk.length() - 3)) * 100 + Integer.parseInt("" + chunk.charAt(chunk.length() - 2)) * 10 + Integer.parseInt("" + chunk.charAt(chunk.length() - 1));
+        		chunks[counter] = chunk.substring(0, chunk.length() - 4);
+        	}
+        	// 2. Append chunks.
+        	StringBuffer val = new StringBuffer();
+        	for (int i = 0; i < chunks.length; i ++) {
+        		val.append(chunks[i]);
+        	}
+        	return val.toString();
+        }
     }
 
 
